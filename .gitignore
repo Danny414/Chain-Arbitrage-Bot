@@ -1,0 +1,59 @@
+# compiled output
+dist
+tmp
+out-tsc
+*.tsbuildinfo
+.expo
+.expo-shared
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Replit
+.cache/
+.local/
+
+# Secrets and local runtime state
+.env
+.env.*
+!.env.example
+scanner_state.db
+Chain-Arbitrage/sc Bot_state.db
+**/scanner_state.db
+**/*_state.db
+**/state.json
+**/hot_log.jsonl
+**/tracked_wallets.json
+**/blocked_tokens.json
+
+# Uploaded reference files and generated bot archives
+attached_assets/
+*.zip
