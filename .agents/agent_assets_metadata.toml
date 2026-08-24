@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "5-9ZmHI1fO6wnWZr_u_cF"
+uri = "file://bsc-whale-bot.zip"
+type = "unspecified"
+title = "BSC Whale Bot (updated)"
+
+[[outputs]]
+id = "i7t50tXv1gyNBnil18JSf"
+uri = "file://base-whale-bot.zip"
+type = "unspecified"
+title = "Base Whale Bot (updated)"
