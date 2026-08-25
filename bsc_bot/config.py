@@ -4,23 +4,41 @@ All constants, token groups, stablecoins, and API settings.
 """
 import os
 
-# ── Telegram ─────────────────────────────────────────────────────────────────
+# ── Telegram ───────────────────────────────────────────────────────────
 TG_TOKEN   = os.getenv("BSC_TG_TOKEN",   "")
 TG_CHAT_ID = os.getenv("BSC_TG_CHAT_ID", "")
 
-# ── BSC RPC endpoints (no API key needed, free tier) ─────────────────────────
+# ── BSC RPC endpoints (no API key needed, free tier)
 # Strategy: single eth_getLogs per cycle (just Transfer topic, no address filter).
 # Client-side CEX filtering — works on any standard node, no topic-array limits.
-BSC_RPC_URLS: list[str] = [
-    "https://bsc.drpc.org",
-    "https://bsc.meowrpc.com",
+#
+# The default list below is a curated set of public BSC JSON-RPC endpoints (2026).
+# Operators can override the list at runtime by setting the BSC_RPC_URLS env var
+# to a comma-separated list of URLs (e.g. BSC_RPC_URLS="https://node1,https://node2").
+_default_bsc_rpc = [
+    "https://bsc-dataseed.bnbchain.org",
+    "https://bsc-dataseed1.defibit.io",
+    "https://bsc-dataseed1.ninicoin.io",
+    "https://bsc-dataseed.nariox.org",
+    "https://bsc.publicnode.com",
     "https://bsc-rpc.publicnode.com",
-    "https://bsc-pokt.nodies.app",
-    "https://1rpc.io/bnb",
+    "https://rpc-bnb.blockmachine.io",
+    # Keep Binance dataseed as a reasonable fallback
     "https://bsc-dataseed.binance.org/",
-    "https://bsc-dataseed1.defibit.io/",
-    "https://bsc-dataseed1.ninicoin.io/",
 ]
+
+_env_list = os.getenv("BSC_RPC_URLS", "").strip()
+if _env_list:
+    _urls = [u.strip() for u in _env_list.split(",") if u.strip()]
+    BSC_RPC_URLS: list[str] = _urls if _urls else _default_bsc_rpc
+else:
+    BSC_RPC_URLS: list[str] = _default_bsc_rpc
+
+# ── RPC tuning / health ───────────────────────────────────────────────────
+# How many consecutive failures before temporarily blacklisting a node
+RPC_MAX_RETRIES = int(os.getenv("RPC_MAX_RETRIES", "3"))
+# How long (seconds) to keep a node blacklisted after repeated failures
+RPC_HEALTH_TTL  = int(os.getenv("RPC_HEALTH_TTL", "300"))  # 5 minutes
 
 # ERC-20 Transfer(address,address,uint256) event topic
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -33,7 +51,7 @@ BSCSCAN_ADR_URL = "https://bscscan.com/address/"
 COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
 COINGECKO_COIN_URL  = "https://api.coingecko.com/api/v3/coins/list"
 
-# ── Timing ───────────────────────────────────────────────────────────────────
+# ── Timing ─────────────────────────────────────────────────────────────
 POLL_SECONDS        = 30    # main scan loop interval (seconds)
 BLOCKS_PER_SCAN     = 60    # blocks per startup catch-up (BSC ~0.5s/block → ~30s)
 MAX_BLOCKS_PER_SCAN = 300   # hard cap per cycle to keep response size bounded
@@ -60,7 +78,7 @@ CLUSTER_LARGE_MIN   = 500_000    # large-cap (BNB group): minimum total USD
 CLUSTER_LARGE_HIGH  = 1_000_000  # large-cap: high-confidence tier
 CLUSTER_MIN_SPREAD  = 1_800      # cluster must span >= 30 min (seconds)
 
-# ── USD Thresholds ────────────────────────────────────────────────────────────
+# ── USD Thresholds ─────────────────────────────────────────────────────────
 THRESHOLD_BTC    = 2_000_000   # BTC and BTC-pegged
 THRESHOLD_ETH    =   500_000   # ETH and ETH-pegged
 THRESHOLD_GOLD   =   500_000   # Gold/commodity tokens
@@ -88,9 +106,9 @@ STABLECOINS: set[str] = {
     "JUSD", "MONEY", "ZUSD", "USDR", "USDK",
     "AUSD", "OUSD", "NUSD", "USDLR", "USDTB", "USDM",
     "LISUSD", "CLPD",
-    # ── EUR-pegged ────────────────────────────────────────────────────────────────────
+    # ── EUR-pegged ─────────────────────────────────────────────────────────
     "EURS", "EURT", "AGEUR", "CEUR", "JEUR", "EUROC", "EURC",
-    # ── Other fiat pegs ────────────────────────────────────────────────────────────
+    # ── Other fiat pegs ───────────────────────────────────────────────────────
     "XSGD", "XAUD", "CADC", "TRYB", "BRLC", "NZDS",
     # ── Algo / depegged (no signal value) ────────────────────────────────────────
     "IRON", "USN", "DJED", "FEI",
