@@ -11,15 +11,19 @@ TG_CHAT_ID = os.getenv("BSC_TG_CHAT_ID", "")
 # ── BSC RPC endpoints (no API key needed, free tier) ─────────────────────────
 # Strategy: single eth_getLogs per cycle (just Transfer topic, no address filter).
 # Client-side CEX filtering — works on any standard node, no topic-array limits.
+# Updated endpoints (2026-08-25) — removed dead nodes, added fresh working RPCs
 BSC_RPC_URLS: list[str] = [
-    "https://bsc.drpc.org",
-    "https://bsc.meowrpc.com",
-    "https://bsc-rpc.publicnode.com",
-    "https://bsc-pokt.nodies.app",
-    "https://1rpc.io/bnb",
-    "https://bsc-dataseed.binance.org/",
-    "https://bsc-dataseed1.defibit.io/",
-    "https://bsc-dataseed1.ninicoin.io/",
+    "https://bsc-rpc.publicnode.com",              # PublicNode - reliable, fast
+    "https://bsc.meowrpc.com",                     # MeowRPC - BSC specialist
+    "https://bsc-pokt.nodies.app",                 # Pocket Network - free tier
+    "https://1rpc.io/bnb",                         # 1RPC - free public endpoint
+    "https://rpc-bsc.48.club",                     # 48 Club RPC - free public
+    "https://bsc-dataseed.binance.org",            # Binance official seed node
+    "https://bsc-dataseed1.defibit.io",            # DeFiBit seed node
+    "https://bsc-dataseed1.ninicoin.io",           # Ninicoin seed node
+    "https://bsc-dataseed2.defibit.io",            # DeFiBit secondary
+    "https://bsc-dataseed3.defibit.io",            # DeFiBit tertiary
+    "https://bsc-dataseed4.defibit.io",            # DeFiBit quaternary
 ]
 
 # ERC-20 Transfer(address,address,uint256) event topic
@@ -33,7 +37,7 @@ BSCSCAN_ADR_URL = "https://bscscan.com/address/"
 COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
 COINGECKO_COIN_URL  = "https://api.coingecko.com/api/v3/coins/list"
 
-# ── Timing ───────────────────────────────────────────────────────────────────
+# ── Timing ────────────────────────────────────────────────────────────────────
 POLL_SECONDS        = 30    # main scan loop interval (seconds)
 BLOCKS_PER_SCAN     = 60    # blocks per startup catch-up (BSC ~0.5s/block → ~30s)
 MAX_BLOCKS_PER_SCAN = 300   # hard cap per cycle to keep response size bounded
@@ -60,7 +64,7 @@ CLUSTER_LARGE_MIN   = 500_000    # large-cap (BNB group): minimum total USD
 CLUSTER_LARGE_HIGH  = 1_000_000  # large-cap: high-confidence tier
 CLUSTER_MIN_SPREAD  = 1_800      # cluster must span >= 30 min (seconds)
 
-# ── USD Thresholds ────────────────────────────────────────────────────────────
+# ── USD Thresholds ─────────────────────────────────────────────────────────────
 THRESHOLD_BTC    = 2_000_000   # BTC and BTC-pegged
 THRESHOLD_ETH    =   500_000   # ETH and ETH-pegged
 THRESHOLD_GOLD   =   500_000   # Gold/commodity tokens
@@ -88,11 +92,11 @@ STABLECOINS: set[str] = {
     "JUSD", "MONEY", "ZUSD", "USDR", "USDK",
     "AUSD", "OUSD", "NUSD", "USDLR", "USDTB", "USDM",
     "LISUSD", "CLPD",
-    # ── EUR-pegged ────────────────────────────────────────────────────────────────────
+    # ── EUR-pegged ───────────────────────────────────────────────────────────
     "EURS", "EURT", "AGEUR", "CEUR", "JEUR", "EUROC", "EURC",
-    # ── Other fiat pegs ────────────────────────────────────────────────────────────
+    # ── Other fiat pegs ──────────────────────────────────────────────────────
     "XSGD", "XAUD", "CADC", "TRYB", "BRLC", "NZDS",
-    # ── Algo / depegged (no signal value) ────────────────────────────────────────
+    # ── Algo / depegged (no signal value) ────────────────────────────────────
     "IRON", "USN", "DJED", "FEI",
 }
 
