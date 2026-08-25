@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy project files
 COPY . .
 
-# Install dependencies from pyproject.toml
-RUN pip install --no-cache-dir -e .
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the BSC bot
 CMD ["python3", "bsc_main.py"]
