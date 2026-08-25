@@ -31,14 +31,14 @@ from bsc_bot.config import (
     CLUSTER_WINDOW, CLUSTER_MIN_WALLETS, CLUSTER_COOLDOWN, CLUSTER_TRACK_MIN,
     CLUSTER_MIN_SPREAD, get_cluster_thresholds,
     BTC_GROUP, ETH_GROUP, GOLD_GROUP,
-    TOKENIZED_STOCKS,
+    TOKENIZED_STOCKS, RPC_MAX_RETRIES, RPC_HEALTH_TTL,
 )
 from bsc_bot.cex_labels import CEX_WALLETS, CEX_SET, classify, is_cex
 from bsc_bot.signals import build_signal_card
 
 logger = logging.getLogger("bsc_bot.monitor")
 
-# ── Symbol blacklist ──────────────────────────────────────────────────────────
+# ── Symbol blacklist ────────────────────────────────────────────────────────
 # BTC/ETH groups are permanently blocked (too liquid / wrong focus for this bot).
 # Users can extend the list via /blocktoken (persisted across restarts).
 _PERMANENTLY_BLOCKED: frozenset[str] = frozenset(
@@ -94,7 +94,7 @@ def _any_cex_label(addr: str) -> str:
 
 _load_blocklist()
 
-# ── In-memory stores ──────────────────────────────────────────────────────────
+# ── In-memory stores ────────────────────────────────────────────────────────
 # (wallet, token) → aggregation entry
 AGGREGATOR: dict[tuple[str, str], dict] = {}
 
@@ -161,6 +161,7 @@ def _rewrite_hot_log():
     except Exception as exc:
         logger.warning(f"[HotLog] Rewrite failed: {exc}")
 
+
 _HOT_SIDE: dict[str, str] = {
     "ACCUMULATION": "buy",
     "DISTRIBUTION": "sell",
@@ -175,7 +176,7 @@ CLUSTER_DATA:       dict[tuple[str, str], list[dict]] = {}
 CLUSTER_LAST_ALERT: dict[tuple[str, str], float]      = {}
 
 
-# ── Hot tokens helpers ────────────────────────────────────────────────────────
+# ── Hot tokens helpers ───────────────────────────────────────────────────────
 
 def _log_hot_token(symbol: str, side: str, usd: float):
     """Append one data point to the rolling hot-tokens log and persist to disk."""
@@ -235,7 +236,7 @@ def get_hot_tokens(window_secs: int = 1800, top_n: int = 10) -> list[dict]:
     return results[:top_n]
 
 
-# ── ABI helpers ───────────────────────────────────────────────────────────────
+# ── ABI helpers ──────────────────────────────────────────────────────────
 
 def _decode_abi_string(hex_data: str) -> str:
     """
@@ -281,6 +282,9 @@ class BSCMonitor:
         self._alert_count       = 0
         self._last_block        = 0          # last block we scanned up to
         self._rpc_idx           = 0          # round-robin RPC index
+        # Node health tracking: consecutive failures and blacklist timestamps
+        self._node_failures: dict[str, int] = {}
+        self._node_blacklist: dict[str, float] = {}
 
     def pause(self):  self._paused = True
     def resume(self): self._paused = False
@@ -349,7 +353,7 @@ class BSCMonitor:
             "paused":     self._paused,
         }
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
+    # ── Main loop ──────────────────────────────────────────────────────────
     async def run(self):
         logger.info("BSC Monitor starting…")
         async with aiohttp.ClientSession(
@@ -368,15 +372,39 @@ class BSCMonitor:
                     logger.error(f"Monitor loop error: {exc}", exc_info=True)
                 await asyncio.sleep(POLL_SECONDS)
 
-    # ── RPC layer ─────────────────────────────────────────────────────────────
+    # ── RPC layer ──────────────────────────────────────────────────────────
     async def _rpc(self, method: str, params: list):
         """
         JSON-RPC call with round-robin fallback across BSC node list.
         Returns the 'result' field or None on failure.
+        Implements temporary node blacklisting after repeated failures.
         """
-        for attempt in range(len(BSC_RPC_URLS)):
-            url = BSC_RPC_URLS[self._rpc_idx % len(BSC_RPC_URLS)]
-            self._rpc_idx += 1
+        now = time.time()
+        n = len(BSC_RPC_URLS)
+        if n == 0:
+            logger.warning("[RPC] No BSC_RPC_URLS configured")
+            return None
+
+        start_idx = self._rpc_idx % n
+        attempted_any = False
+
+        for attempt in range(n):
+            idx = (start_idx + attempt) % n
+            url = BSC_RPC_URLS[idx]
+
+            # Skip temporarily blacklisted nodes
+            bl_until = self._node_blacklist.get(url, 0)
+            if bl_until and bl_until > now:
+                # still blacklisted — skip
+                logger.debug(f"[RPC] Skipping blacklisted node: {url}")
+                continue
+
+            # Mark that we will attempt at least one node
+            attempted_any = True
+
+            # advance round-robin pointer for next call
+            self._rpc_idx = (idx + 1) % n
+
             try:
                 async with self._session.post(
                     url,
@@ -386,19 +414,51 @@ class BSCMonitor:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         if "result" in data:
+                            # Success — reset failure counter and un-blacklist if needed
+                            if self._node_failures.get(url):
+                                self._node_failures[url] = 0
+                            if self._node_blacklist.get(url):
+                                logger.info(f"[RPC] Node recovered: {url}")
+                                self._node_blacklist.pop(url, None)
+                            logger.debug(f"[RPC] Success from {url} for {method}")
                             return data["result"]
                         if "error" in data:
                             logger.debug(f"RPC {method} error from {url}: {data['error']}")
+                            # treat as failure and continue to next node
                     else:
                         logger.debug(f"RPC {method} HTTP {r.status} from {url}")
+
+                # If we reach here, treat as failure for this node
+                self._node_failures[url] = self._node_failures.get(url, 0) + 1
+                logger.debug(f"[RPC] Failure count for {url}: {self._node_failures[url]}")
+                if self._node_failures[url] >= RPC_MAX_RETRIES:
+                    self._node_blacklist[url] = now + RPC_HEALTH_TTL
+                    logger.warning(f"[RPC] Blacklisting node {url} for {RPC_HEALTH_TTL}s after {self._node_failures[url]} failures")
+                    self._node_failures[url] = 0
+
             except asyncio.TimeoutError:
                 logger.debug(f"RPC {method} timeout from {url}")
+                self._node_failures[url] = self._node_failures.get(url, 0) + 1
+                if self._node_failures[url] >= RPC_MAX_RETRIES:
+                    self._node_blacklist[url] = now + RPC_HEALTH_TTL
+                    logger.warning(f"[RPC] Blacklisting node {url} for {RPC_HEALTH_TTL}s after {self._node_failures[url]} timeouts")
+                    self._node_failures[url] = 0
             except Exception as exc:
                 logger.debug(f"RPC {method} exception from {url}: {exc}")
+                self._node_failures[url] = self._node_failures.get(url, 0) + 1
+                if self._node_failures[url] >= RPC_MAX_RETRIES:
+                    self._node_blacklist[url] = now + RPC_HEALTH_TTL
+                    logger.warning(f"[RPC] Blacklisting node {url} for {RPC_HEALTH_TTL}s after {self._node_failures[url]} errors")
+                    self._node_failures[url] = 0
+
+        if not attempted_any:
+            logger.warning(f"[RPC] All nodes currently blacklisted — skipping {method}")
+            return None
+
         logger.warning(f"[RPC] All nodes failed for {method}")
         return None
 
-    # ── Token info ────────────────────────────────────────────────────────────
+    # ── Token info ─────────────────────────────────────────────────────────
     async def _get_token_info(self, contract: str) -> dict:
         """
         Fetch symbol() and decimals() from a BEP-20 contract.
@@ -429,7 +489,7 @@ class BSCMonitor:
         logger.debug(f"[Token] {contract[:14]}.. = {symbol} ({decimals} dec)")
         return info
 
-    # ── Price service ─────────────────────────────────────────────────────────
+    # ── Price service ───────────────────────────────────────────────────────
     async def _refresh_prices(self):
         """Batch-refresh CoinGecko prices for all known tokens every PRICE_TTL seconds."""
         now = time.time()
@@ -511,7 +571,7 @@ class BSCMonitor:
     def _market_cap(self, symbol: str) -> float:
         return MARKET_CAP_CACHE.get(symbol.upper(), 0.0)
 
-    # ── Block scanning ────────────────────────────────────────────────────────
+    # ── Block scanning ───────────────────────────────────────────────────────
     async def _scan_blocks(self):
         """
         Fetch all Transfer events for the block range, then filter client-side
@@ -572,7 +632,7 @@ class BSCMonitor:
             except Exception as exc:
                 logger.debug(f"[Log] Process error: {exc}")
 
-    # ── Log processor ─────────────────────────────────────────────────────────
+    # ── Log processor ────────────────────────────────────────────────────────
     async def _process_log(self, log: dict, cur_block: int):
         """Parse a single Transfer event log and fire an alert if it qualifies."""
         topics = log.get("topics", [])
@@ -590,7 +650,7 @@ class BSCMonitor:
         if not tx_hash or not contract or not from_addr or not to_addr:
             return
 
-        # ── Dedup by tx_hash + log_index ──────────────────────────────────────
+        # ── Dedup by tx_hash + log_index ───────────────────────────���──────────
         dedup_key = f"{tx_hash}:{log_index}"
         if dedup_key in SEEN_TXS:
             return
@@ -639,11 +699,11 @@ class BSCMonitor:
 
         usd_value = amount * price
 
-        # ── Dust filter ────────────────────────────────────────────────────────
+        # ── Dust filter ───────────────────────────────────────────────────────
         if usd_value > 0 and usd_value < DUST_FILTER:
             return
 
-        # ── Concentration cluster tracking (runs before individual threshold) ──
+        # ── Concentration cluster tracking (runs before individual threshold) ��─
         # Lower bar (CLUSTER_TRACK_MIN) so small-but-coordinated moves are caught
         _from_cex = is_cex(from_addr)
         _to_cex   = is_cex(to_addr)
@@ -658,12 +718,12 @@ class BSCMonitor:
         if usd_value > 0 and usd_value < threshold:
             return
 
-        # ── Aggregation ────────────────────────────────────────────────────────
+        # ── Aggregation ───────────────────────────────────────────────────────
         # Track the non-CEX side of the transfer as the key wallet
         wallet_key = to_addr if _from_cex else from_addr
         agg = self._aggregate(wallet_key, symbol, amount, usd_value)
 
-        # ── Alert cooldown ─────────────────────────────────────────────────────
+        # ── Alert cooldown ─────────────────────���───────────────────────────────
         now      = time.time()
         cool_key = (wallet_key, symbol)
         if now - LAST_ALERT.get(cool_key, 0) < ALERT_COOLDOWN:
@@ -686,7 +746,7 @@ class BSCMonitor:
             f"{from_addr[:10]}..→{to_addr[:10]}.."
         )
 
-        # ── Hot tokens log ────────────────────────────────────────────────────
+        # ── Hot tokens log ───────────────────────────────────────────────────
         hot_side = _HOT_SIDE.get(signal["type"], "neutral")
         _log_hot_token(symbol, hot_side, usd_value or 0)
 
@@ -707,7 +767,7 @@ class BSCMonitor:
         )
 
 
-    # ── Aggregator ────────────────────────────────────────────────────────────
+    # ── Aggregator ─────────────────────────────────────────────────────────
     def _aggregate(
         self,
         wallet: str, token: str,
